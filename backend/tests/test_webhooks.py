@@ -1,4 +1,4 @@
-from fastapi import BackgroundTasks
+from unittest.mock import patch
 
 from app.api.v1.webhooks import _build_signature, deliver_webhook
 from app.models.webhook import WebhookConfig
@@ -30,7 +30,8 @@ def test_build_signature_generates_hmac_sha256():
     assert len(signature) == 64
 
 
-def test_deliver_webhook_schedules_matching_active_webhook():
+@patch("app.api.v1.webhooks._post_webhook")
+def test_deliver_webhook_calls_matching_active_webhook(mock_post):
     webhook = WebhookConfig(
         user_id=1,
         url="https://example.com/webhook",
@@ -39,20 +40,23 @@ def test_deliver_webhook_schedules_matching_active_webhook():
         events=["guard_block"],
     )
 
-    background_tasks = BackgroundTasks()
-
     deliver_webhook(
         db=DummyDB([webhook]),
         user_id=1,
         event="guard_block",
         payload={"decision": "block"},
-        background_tasks=background_tasks,
     )
 
-    assert len(background_tasks.tasks) == 1
+    mock_post.assert_called_once_with(
+        url="https://example.com/webhook",
+        event="guard_block",
+        payload={"decision": "block"},
+        secret="secret",
+    )
 
 
-def test_deliver_webhook_ignores_unsubscribed_event():
+@patch("app.api.v1.webhooks._post_webhook")
+def test_deliver_webhook_ignores_unsubscribed_event(mock_post):
     webhook = WebhookConfig(
         user_id=1,
         url="https://example.com/webhook",
@@ -61,14 +65,11 @@ def test_deliver_webhook_ignores_unsubscribed_event():
         events=["compliance_drift"],
     )
 
-    background_tasks = BackgroundTasks()
-
     deliver_webhook(
         db=DummyDB([webhook]),
         user_id=1,
         event="guard_block",
         payload={"decision": "block"},
-        background_tasks=background_tasks,
     )
 
-    assert len(background_tasks.tasks) == 0
+    mock_post.assert_not_called()
